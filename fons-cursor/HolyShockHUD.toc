@@ -1,0 +1,6 @@
+## Interface: 120001
+## Title: HolyShockHUD
+## Notes: Cursor HUD for Holy Shock charges and Infusion of Light stacks
+## Version: 0.1
+
+HolyShockHUD.lua
