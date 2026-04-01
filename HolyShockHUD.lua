@@ -94,6 +94,7 @@ end
 
 -- ── Constants ─────────────────────────────────────────────────────────────
 local HOLY_SHOCK_ID = 20473
+local DT_ID         = 375576
 local IOL_MAX_DUR   = 15
 local PI            = math.pi
 local TAU           = PI * 2
@@ -216,19 +217,42 @@ local function SetRingProgress(progress)
 end
 
 -- ── IoL tracking ─────────────────────────────────────────────────────────
-local IOL_WINDOW      = 1.5
+local IOL_WINDOW      = 1
 local lastHSCastTime  = 0
-local lastChargeCount = -1
 local iolEligible     = false
+local HOLY_SHOCK_ID = 20473
+local DIVINE_TOLL_ID = 375576
+
+local VALID_TRIGGERS = {
+    [HOLY_SHOCK_ID] = true,
+    [DIVINE_TOLL_ID] = true,
+}
+
+-- 1. Create a frame to listen for the cast event
+local eventHandler = CreateFrame("Frame")
+eventHandler:RegisterUnitEvent("UNIT_SPELLCAST_SUCCEEDED", "player")
+
+eventHandler:SetScript("OnEvent", function(_, event, unit, castID, spellID)
+    -- If the spell cast is in our trigger list, start the window
+    if VALID_TRIGGERS[spellID] then
+        lastHSCastTime = GetTime()
+        iolEligible = true
+    end
+end)
 
 local function GetIoLStacks()
+    -- If we haven't cast Holy Shock recently, ignore ALL auras
     if not iolEligible then return 0 end
+
     local stacks = 0
-    local auras  = C_UnitAuras.GetUnitAuras("player", "PLAYER|HELPFUL", 40)
+    local auras = C_UnitAuras.GetUnitAuras("player", "PLAYER|HELPFUL")
     if auras then
         for _, aura in ipairs(auras) do
             local dur = aura.duration
-            if dur and dur > 0 and dur <= IOL_MAX_DUR then
+            -- TIGHTEN THE FILTER:
+            -- Divine Purpose is 12s. IoL is 15s.
+            -- We only count it if the duration is exactly 15s.
+            if dur and math.abs(dur - 15) < 0.1 then
                 stacks = stacks + (aura.applications or 1)
             end
         end
@@ -236,18 +260,23 @@ local function GetIoLStacks()
     return math.min(stacks, 2)
 end
 
-local function CheckHolyShockCast(charges)
-    if lastChargeCount > 0 and charges < lastChargeCount then
-        lastHSCastTime = GetTime()
-        iolEligible    = true
-    end
-    lastChargeCount = charges
-end
-
+-- We keep this for the "Expiration" check
 local function UpdateIoLEligibility()
+    -- If we aren't even looking for a proc, do nothing
     if not iolEligible then return end
-    if GetTime() - lastHSCastTime > IOL_WINDOW then
-        if GetIoLStacks() == 0 then iolEligible = false end
+
+    local now = GetTime()
+    local timeSinceCast = now - lastHSCastTime
+
+    -- 1. If we are within the 1.5s window, stay eligible (waiting for the server to give us the buff)
+    if timeSinceCast <= IOL_WINDOW then
+        return
+    end
+
+    -- 2. If we are PAST the 1.5s window, check if the buff is active.
+    -- If the buff is gone (consumed or expired), we stop being eligible.
+    if GetIoLStacks() == 0 then
+        iolEligible = false
     end
 end
 
@@ -258,14 +287,18 @@ local onCooldown = false
 
 local function UpdateHUD()
     if not chargeText then return end
+
     local chargeInfo = C_Spell.GetSpellCharges(HOLY_SHOCK_ID)
     if chargeInfo then
         local charges        = chargeInfo.currentCharges
         local maxCharges     = chargeInfo.maxCharges
         local chargeStart    = chargeInfo.cooldownStartTime
         local chargeDuration = chargeInfo.cooldownDuration
-        CheckHolyShockCast(charges)
+
+        -- REMOVED: CheckHolyShockCast(charges) -> This is now handled by the event listener!
+
         chargeText:SetText(tostring(charges))
+
         if charges < maxCharges and chargeDuration and chargeDuration > 0 then
             cdStart = chargeStart; cdDuration = chargeDuration; onCooldown = true
             chargeText:SetTextColor(0.5, 0.5, 0.5, 1)
@@ -277,12 +310,15 @@ local function UpdateHUD()
     else
         chargeText:SetText("-"); onCooldown = false; SetRingProgress(1)
     end
+
+    -- ── Dots Logic (Updated for full transparency) ──
     local stacks = GetIoLStacks()
     for i = 1, 2 do
         if dots[i] then
             if i <= stacks then
                 dots[i].tex:SetColorTexture(cfg.dotR, cfg.dotG, cfg.dotB, 1)
             else
+                -- Full transparency as requested
                 dots[i].tex:SetColorTexture(0, 0, 0, 0)
             end
         end
@@ -290,24 +326,22 @@ local function UpdateHUD()
 end
 
 root:SetScript("OnUpdate", function()
+    -- Handle cursor positioning
     local x, y = GetCursorPosition()
     local s    = UIParent:GetEffectiveScale()
-    root:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT",
-        x / s + cfg.offsetX, y / s + cfg.offsetY)
+    root:SetPoint("BOTTOMLEFT", UIParent, "BOTTOMLEFT", x / s + cfg.offsetX, y / s + cfg.offsetY)
+
+    -- Check if the 1.5s window for IoL has expired
     UpdateIoLEligibility()
+
+    -- Smooth Cooldown Ring animation
     if onCooldown then
         local progress = math.min((GetTime() - cdStart) / cdDuration, 1)
         SetRingProgress(progress)
         if progress >= 1 then onCooldown = false end
     end
-    UpdateHUD()
-end)
 
-root:RegisterEvent("PLAYER_LOGIN")
-root:RegisterEvent("SPELL_UPDATE_CHARGES")
-root:RegisterEvent("UNIT_AURA")
-root:SetScript("OnEvent", function(self, event, unit)
-    if event == "UNIT_AURA" and unit ~= "player" then return end
+    -- Update the text and dots
     UpdateHUD()
 end)
 
