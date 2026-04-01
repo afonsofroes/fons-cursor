@@ -283,7 +283,7 @@ local function UpdateHUD()
             if i <= stacks then
                 dots[i].tex:SetColorTexture(cfg.dotR, cfg.dotG, cfg.dotB, 1)
             else
-                dots[i].tex:SetColorTexture(0.3, 0.3, 0.3, 0.35)
+                dots[i].tex:SetColorTexture(0, 0, 0, 0)
             end
         end
     end
