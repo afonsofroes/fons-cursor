@@ -222,6 +222,7 @@ local lastHSCastTime  = 0
 local iolEligible     = false
 local HOLY_SHOCK_ID = 20473
 local DIVINE_TOLL_ID = 375576
+local IOL_AURA_ID = 54149
 
 local VALID_TRIGGERS = {
     [HOLY_SHOCK_ID] = true,
@@ -244,20 +245,17 @@ local function GetIoLStacks()
     -- If we haven't cast Holy Shock recently, ignore ALL auras
     if not iolEligible then return 0 end
 
-    local stacks = 0
-    local auras = C_UnitAuras.GetUnitAuras("player", "PLAYER|HELPFUL")
-    if auras then
-        for _, aura in ipairs(auras) do
-            local dur = aura.duration
-            -- TIGHTEN THE FILTER:
-            -- Divine Purpose is 12s. IoL is 15s.
-            -- We only count it if the duration is exactly 15s.
-            if dur and math.abs(dur - 15) < 0.1 then
-                stacks = stacks + (aura.applications or 1)
-            end
-        end
+    -- Fetch the exact aura data by Spell ID instead of looping through everything
+    local auraData = C_UnitAuras.GetPlayerAuraBySpellID(IOL_AURA_ID)
+
+    if auraData then
+        -- Return the number of stacks (applications). If it's 0 or nil, default to 1.
+        local stacks = auraData.applications and auraData.applications > 0 and auraData.applications or 1
+        return math.min(stacks, 2)
     end
-    return math.min(stacks, 2)
+
+    -- If auraData is nil, we don't have the buff
+    return 0
 end
 
 -- We keep this for the "Expiration" check
